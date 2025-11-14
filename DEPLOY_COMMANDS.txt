@@ -1,0 +1,59 @@
+🚀 VAMPIRE HUNT - DEPLOYMENT COMMANDS
+=====================================
+
+STEP 1: Navigate to Server
+---------------------------
+cd /Users/doktaruser/Desktop/Windsurf/VampireHunt/server
+
+
+STEP 2: Login to Heroku
+------------------------
+heroku login
+(Opens browser - log in with Heroku account)
+
+
+STEP 3: Create Heroku App
+--------------------------
+heroku create vampire-hunt-server
+(Note the URL it gives you)
+
+
+STEP 4: Deploy to Heroku
+-------------------------
+git push heroku master
+(If error, try: git push heroku main)
+
+
+STEP 5: Open Your App
+----------------------
+heroku open
+
+
+STEP 6: Test Health Endpoint
+-----------------------------
+curl https://vampire-hunt-server.herokuapp.com/health
+
+
+STEP 7: View Logs
+-----------------
+heroku logs --tail
+
+
+STEP 8: Update Mobile App
+--------------------------
+File: VampireHuntApp/src/services/SocketService.ts
+Line 20: Change to production URL
+Then: npx react-native run-ios
+
+
+STEP 9: Test Web Client
+------------------------
+Open: https://vampire-hunt-server.herokuapp.com/test-web-client.html
+
+
+✅ DONE!
+========
+Your backend is now live in production!
+
+For detailed instructions, see: DEPLOY_READY.md
+For troubleshooting, see: DEPLOY_MANUAL.md
