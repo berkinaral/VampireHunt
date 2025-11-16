@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vampire Hunt - Web Test Client</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #0f0f1e 100%);
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #ff4444;
+            margin-bottom: 30px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        
+        .card {
+            background: rgba(42, 42, 62, 0.9);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #aaa;
+        }
+        
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #444;
+            border-radius: 5px;
+            background: #1a1a2e;
+            color: #fff;
+            font-size: 16px;
+        }
+        
+        button {
+            padding: 12px 24px;
+            background: #ff4444;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        
+        button:hover {
+            background: #ff6666;
+            transform: translateY(-2px);
+        }
+        
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+        
+        .status.connected {
+            background: #2a4a2a;
+            border: 1px solid #4a7a4a;
+        }
+        
+        .status.disconnected {
+            background: #4a2a2a;
+            border: 1px solid #7a4a4a;
+        }
+        
+        .room-code {
+            font-size: 24px;
+            font-weight: bold;
+            color: #ff4444;
+            text-align: center;
+            padding: 10px;
+            background: #1a1a2e;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+        
+        .players-list {
+            list-style: none;
+        }
+        
+        .player-item {
+            padding: 10px;
+            background: #1a1a2e;
+            border-radius: 5px;
+            margin-bottom: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .player-item.eliminated {
+            opacity: 0.5;
+            text-decoration: line-through;
+        }
+        
+        .role {
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        
+        .role.vampire {
+            background: #8b0000;
+        }
+        
+        .role.villager {
+            background: #2a5a2a;
+        }
+        
+        .phase {
+            text-align: center;
+            font-size: 20px;
+            margin: 10px 0;
+            padding: 10px;
+            background: #1a1a2e;
+            border-radius: 8px;
+        }
+        
+        .timer {
+            text-align: center;
+            font-size: 36px;
+            font-weight: bold;
+            color: #ff4444;
+            margin: 10px 0;
+        }
+        
+        .log {
+            background: #1a1a2e;
+            padding: 10px;
+            border-radius: 5px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 2px 0;
+        }
+        
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🦇 Vampire Hunt - Test Client</h1>
+        
+        <div class="card">
+            <div class="status disconnected" id="connectionStatus">
+                Disconnected from server
+            </div>
+        </div>
+        
+        <div class="card" id="loginCard">
+            <h2>Join Game</h2>
+            <div class="form-group">
+                <label>Your Name:</label>
+                <input type="text" id="playerName" placeholder="Enter your name" value="Player">
+            </div>
+            <button onclick="connect()">Connect to Server</button>
+        </div>
+        
+        <div class="card hidden" id="menuCard">
+            <h2>Game Menu</h2>
+            <button onclick="createRoom()">Create New Room</button>
+            <div class="form-group" style="margin-top: 20px;">
+                <label>Or Join Existing Room:</label>
+                <input type="text" id="roomCode" placeholder="Enter room code" maxlength="6" style="text-transform: uppercase;">
+                <button onclick="joinRoom()" style="margin-top: 10px;">Join Room</button>
+            </div>
+        </div>
+        
+        <div class="card hidden" id="roomCard">
+            <h2>Room</h2>
+            <div class="room-code" id="roomCodeDisplay">------</div>
+            <div class="phase" id="phaseDisplay">Waiting for players...</div>
+            <div class="timer" id="timerDisplay"></div>
+            
+            <h3>Players:</h3>
+            <ul class="players-list" id="playersList"></ul>
+            
+            <div id="gameControls">
+                <button id="startButton" onclick="startGame()" class="hidden">Start Game (Host Only)</button>
+                <button id="leaveButton" onclick="leaveRoom()">Leave Room</button>
+            </div>
+            
+            <div id="roleDisplay" class="hidden">
+                <h3>Your Role:</h3>
+                <div class="role" id="roleInfo"></div>
+            </div>
+            
+            <div id="votingSection" class="hidden">
+                <h3>Vote for a player:</h3>
+                <div id="votingButtons"></div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h3>Event Log</h3>
+            <div class="log" id="eventLog"></div>
+        </div>
+    </div>
+    
+    <script>
+        let socket = null;
+        let currentRoom = null;
+        let currentPlayer = null;
+        let myRole = null;
+        let gamePhase = null;
+        
+        function log(message) {
+            const logDiv = document.getElementById('eventLog');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function connect() {
+            const name = document.getElementById('playerName').value.trim();
+            if (!name) {
+                alert('Please enter your name');
+                return;
+            }
+            
+            currentPlayer = {
+                id: Math.random().toString(36).substr(2, 9),
+                name: name
+            };
+            
+            // Auto-detect server URL (works for both localhost and network access)
+            const serverUrl = window.location.origin.includes('file://') 
+                ? 'http://192.168.1.103:3000'  // For file:// protocol
+                : window.location.origin;       // For http:// protocol
+            
+            socket = io(serverUrl);
+            
+            socket.on('connect', () => {
+                log('Connected to server');
+                document.getElementById('connectionStatus').textContent = 'Connected to server';
+                document.getElementById('connectionStatus').className = 'status connected';
+                document.getElementById('loginCard').classList.add('hidden');
+                document.getElementById('menuCard').classList.remove('hidden');
+            });
+            
+            socket.on('disconnect', () => {
+                log('Disconnected from server');
+                document.getElementById('connectionStatus').textContent = 'Disconnected from server';
+                document.getElementById('connectionStatus').className = 'status disconnected';
+            });
+            
+            socket.on('connect_error', (error) => {
+                log(`Connection error: ${error.message}`);
+                alert(`Cannot connect to server at ${serverUrl}\n\nMake sure:\n1. Server is running (npm run dev)\n2. You're on the same WiFi network\n3. Firewall allows port 3000`);
+                document.getElementById('connectionStatus').textContent = 'Connection failed';
+                document.getElementById('connectionStatus').className = 'status disconnected';
+            });
+            
+            socket.on('room_created', (data) => {
+                log(`Room created: ${data.roomCode}`);
+                currentRoom = data;
+                showRoom(data);
+            });
+            
+            socket.on('joined_room', (data) => {
+                log(`Joined room: ${data.roomCode}`);
+                currentRoom = data;
+                showRoom(data);
+            });
+            
+            socket.on('room_update', (data) => {
+                log(`Room updated: ${data.players.length} players`);
+                currentRoom = data;
+                updateRoom(data);
+            });
+            
+            socket.on('game_started', () => {
+                log('Game started!');
+                document.getElementById('startButton').classList.add('hidden');
+            });
+            
+            socket.on('role_assigned', (role) => {
+                log(`Your role: ${role}`);
+                myRole = role;
+                document.getElementById('roleDisplay').classList.remove('hidden');
+                document.getElementById('roleInfo').textContent = role;
+                document.getElementById('roleInfo').className = `role ${role.toLowerCase()}`;
+            });
+            
+            socket.on('phase_change', (data) => {
+                log(`Phase changed to: ${data.phase}`);
+                gamePhase = data.phase;
+                updatePhase(data.phase);
+                
+                // Show voting buttons during appropriate phases
+                if ((data.phase === 'NIGHT_PHASE' && myRole === 'VAMPIRE') ||
+                    (data.phase === 'DAY_VOTING')) {
+                    showVotingButtons();
+                } else {
+                    document.getElementById('votingSection').classList.add('hidden');
+                }
+            });
+            
+            socket.on('timer_update', (seconds) => {
+                document.getElementById('timerDisplay').textContent = `${seconds}s`;
+            });
+            
+            socket.on('player_eliminated', (data) => {
+                log(`${data.playerName} was eliminated!`);
+                updateRoom(currentRoom);
+            });
+            
+            socket.on('game_over', (data) => {
+                log(`Game Over! Winners: ${data.winners}`);
+                alert(`Game Over!\nWinners: ${data.winners}\n\nFinal roles will be shown.`);
+                gamePhase = 'GAME_OVER';
+                updatePhase('GAME_OVER');
+            });
+            
+            socket.on('error', (error) => {
+                log(`Error: ${error}`);
+                alert(error);
+            });
+        }
+        
+        function createRoom() {
+            socket.emit('create_room', {
+                hostId: currentPlayer.id,
+                hostName: currentPlayer.name
+            });
+        }
+        
+        function joinRoom() {
+            const code = document.getElementById('roomCode').value.toUpperCase();
+            if (!code || code.length !== 6) {
+                alert('Please enter a valid 6-character room code');
+                return;
+            }
+            
+            socket.emit('join_room', {
+                roomCode: code,
+                playerId: currentPlayer.id,
+                playerName: currentPlayer.name
+            });
+        }
+        
+        function leaveRoom() {
+            if (currentRoom) {
+                socket.emit('leave_room', {
+                    roomCode: currentRoom.roomCode,
+                    playerId: currentPlayer.id
+                });
+                currentRoom = null;
+                document.getElementById('roomCard').classList.add('hidden');
+                document.getElementById('menuCard').classList.remove('hidden');
+            }
+        }
+        
+        function startGame() {
+            if (currentRoom) {
+                socket.emit('start_game', {
+                    roomCode: currentRoom.roomCode
+                });
+            }
+        }
+        
+        function showRoom(room) {
+            document.getElementById('menuCard').classList.add('hidden');
+            document.getElementById('roomCard').classList.remove('hidden');
+            document.getElementById('roomCodeDisplay').textContent = room.roomCode;
+            updateRoom(room);
+        }
+        
+        function updateRoom(room) {
+            const playersList = document.getElementById('playersList');
+            playersList.innerHTML = '';
+            
+            room.players.forEach(player => {
+                const li = document.createElement('li');
+                li.className = 'player-item';
+                if (player.status === 'ELIMINATED') {
+                    li.classList.add('eliminated');
+                }
+                
+                let text = player.name;
+                if (player.isHost) text += ' 👑';
+                if (player.status === 'ELIMINATED') text += ' ☠️';
+                
+                li.textContent = text;
+                playersList.appendChild(li);
+            });
+            
+            // Show start button for host
+            const isHost = room.players.find(p => p.id === currentPlayer.id)?.isHost;
+            if (isHost && room.players.length >= 4 && room.status === 'WAITING') {
+                document.getElementById('startButton').classList.remove('hidden');
+            } else {
+                document.getElementById('startButton').classList.add('hidden');
+            }
+        }
+        
+        function updatePhase(phase) {
+            const phaseDisplay = document.getElementById('phaseDisplay');
+            const phaseNames = {
+                'LOBBY': 'Waiting in Lobby',
+                'ROLE_REVEAL': 'Revealing Roles',
+                'NIGHT_PHASE': '🌙 Night Phase',
+                'DAY_DISCUSSION': '☀️ Day Discussion',
+                'DAY_VOTING': '🗳️ Day Voting',
+                'GAME_OVER': '🏁 Game Over'
+            };
+            phaseDisplay.textContent = phaseNames[phase] || phase;
+        }
+        
+        function showVotingButtons() {
+            if (!currentRoom) return;
+            
+            const votingSection = document.getElementById('votingSection');
+            const votingButtons = document.getElementById('votingButtons');
+            votingSection.classList.remove('hidden');
+            votingButtons.innerHTML = '';
+            
+            currentRoom.players.forEach(player => {
+                if (player.id !== currentPlayer.id && player.status === 'ALIVE') {
+                    const btn = document.createElement('button');
+                    btn.textContent = `Vote for ${player.name}`;
+                    btn.onclick = () => vote(player.id);
+                    votingButtons.appendChild(btn);
+                }
+            });
+        }
+        
+        function vote(targetId) {
+            socket.emit('cast_vote', {
+                roomCode: currentRoom.roomCode,
+                voterId: currentPlayer.id,
+                targetId: targetId
+            });
+            document.getElementById('votingSection').classList.add('hidden');
+            log(`You voted for a player`);
+        }
+    </script>
+</body>
+</html>

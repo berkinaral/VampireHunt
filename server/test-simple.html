@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Socket.io Connection Test</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body style="font-family: Arial; padding: 20px; background: #1a1a2e; color: white;">
+    <h1>🦇 Vampire Hunt - Connection Test</h1>
+    <div id="status" style="padding: 20px; margin: 20px 0; border-radius: 10px; background: #2a2a3e;">
+        <h2>Status: <span id="statusText" style="color: yellow;">Testing...</span></h2>
+        <div id="log" style="margin-top: 20px; font-family: monospace; font-size: 12px;"></div>
+    </div>
+
+    <script>
+        const log = (msg) => {
+            const logDiv = document.getElementById('log');
+            const time = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `<div>[${time}] ${msg}</div>`;
+            console.log(msg);
+        };
+
+        const setStatus = (text, color) => {
+            document.getElementById('statusText').textContent = text;
+            document.getElementById('statusText').style.color = color;
+        };
+
+        log('Starting connection test...');
+        log(`Connecting to: ${window.location.origin}`);
+
+        const socket = io(window.location.origin, {
+            transports: ['websocket', 'polling'],
+            reconnection: true
+        });
+
+        socket.on('connect', () => {
+            log('✅ Connected successfully!');
+            log(`Socket ID: ${socket.id}`);
+            setStatus('Connected', '#00ff00');
+        });
+
+        socket.on('disconnect', (reason) => {
+            log(`❌ Disconnected: ${reason}`);
+            setStatus('Disconnected', '#ff4444');
+        });
+
+        socket.on('connect_error', (error) => {
+            log(`❌ Connection error: ${error.message}`);
+            setStatus('Connection Failed', '#ff4444');
+        });
+
+        socket.on('error', (error) => {
+            log(`❌ Error: ${error}`);
+        });
+
+        // Test creating a room
+        setTimeout(() => {
+            if (socket.connected) {
+                log('Testing room creation...');
+                socket.emit('create_room', {
+                    playerName: 'TestPlayer',
+                    maxPlayers: 10
+                });
+            }
+        }, 2000);
+
+        socket.on('room_created', (data) => {
+            log(`✅ Room created: ${data.roomCode}`);
+        });
+    </script>
+</body>
+</html>
