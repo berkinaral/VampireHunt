@@ -1,34 +1,33 @@
-# Node modules
-node_modules
-*/node_modules
+# Mobile app (not needed for server deployment)
+VampireHuntApp
 
-# Build artifacts
-dist
-*/dist
-
-# Git
-.git
-.gitignore
-
-# Documentation
+# Documentation (keep only essential)
 *.md
-!README.md
+!server/README.md
 
 # IDE
 .vscode
 .idea
 
-# Mobile app (not needed for server deployment)
-VampireHuntApp
+# Git (but keep .gitignore)
+.git
 
 # Logs
 *.log
 npm-debug.log*
 
-# Environment files
-.env
-.env.local
-
 # OS files
 .DS_Store
 Thumbs.db
+
+# Test files in root (not in server)
+test-*.js
+test-*.html
+
+# Deployment scripts
+deploy.sh
+Procfile
+
+# Config files not needed in Docker
+railway.json
+railway.toml
