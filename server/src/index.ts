@@ -14,7 +14,9 @@ import {
   CreateRoomPayload, 
   JoinRoomPayload, 
   StartGamePayload, 
-  CastVotePayload 
+  CastVotePayload,
+  UpdateSettingsPayload,
+  ExtendTimePayload
 } from './types/game.types';
 
 // Load environment variables
@@ -87,7 +89,7 @@ io.on('connection', (socket) => {
         playerId,
         socket.id,
         payload.playerName,
-        payload.maxPlayers
+        payload.settings
       );
 
       // Join the socket room
@@ -210,6 +212,77 @@ io.on('connection', (socket) => {
     } catch (error: any) {
       socket.emit('error', {
         message: error.message || 'Failed to cast vote',
+      });
+    }
+  });
+
+  // Update Settings
+  socket.on('update_settings', (payload: UpdateSettingsPayload) => {
+    try {
+      const room = roomManager.getRoom(payload.roomCode);
+      
+      if (!room) {
+        throw new Error('Room not found');
+      }
+
+      // Check if requester is host
+      let isHost = false;
+      for (const player of room.players.values()) {
+        if (player.socketId === socket.id && player.isHost) {
+          isHost = true;
+          break;
+        }
+      }
+
+      if (!isHost) {
+        throw new Error('Only the host can update settings');
+      }
+
+      const updatedRoom = roomManager.updateSettings(payload.roomCode, payload.settings);
+
+      if (updatedRoom) {
+        // Broadcast updated settings to all players
+        io.to(updatedRoom.code).emit('settings_updated', {
+          settings: updatedRoom.settings,
+        });
+
+        console.log(`Settings updated in room ${updatedRoom.code}`);
+      }
+    } catch (error: any) {
+      socket.emit('error', {
+        message: error.message || 'Failed to update settings',
+      });
+    }
+  });
+
+  // Extend Time
+  socket.on('extend_time', (payload: ExtendTimePayload) => {
+    try {
+      const room = roomManager.getRoom(payload.roomCode);
+      
+      if (!room) {
+        throw new Error('Room not found');
+      }
+
+      // Check if requester is host
+      let isHost = false;
+      for (const player of room.players.values()) {
+        if (player.socketId === socket.id && player.isHost) {
+          isHost = true;
+          break;
+        }
+      }
+
+      if (!isHost) {
+        throw new Error('Only the host can extend time');
+      }
+
+      gameEngine.extendTime(room, room.settings.extraTimeAmount);
+
+      console.log(`Time extended in room ${room.code} by ${room.settings.extraTimeAmount}s`);
+    } catch (error: any) {
+      socket.emit('error', {
+        message: error.message || 'Failed to extend time',
       });
     }
   });

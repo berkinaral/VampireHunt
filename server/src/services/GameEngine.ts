@@ -1,4 +1,4 @@
-import { Room, Player, PlayerRole, PlayerStatus, GamePhase, GameResult } from '../types/game.types';
+import { Room, Player, PlayerRole, PlayerStatus, GamePhase, GameResult, VotingRound, PhaseTransitionEvent } from '../types/game.types';
 import { Server } from 'socket.io';
 
 export class GameEngine {
@@ -22,8 +22,8 @@ export class GameEngine {
       });
     }
 
-    // Start role reveal timer (10 seconds)
-    this.startPhaseTimer(room, 10, () => {
+    // Start role reveal timer (use setting)
+    this.startPhaseTimer(room, room.settings.roleRevealTime, () => {
       this.moveToNightPhase(room);
     });
   }
@@ -32,8 +32,10 @@ export class GameEngine {
     const players = Array.from(room.players.values());
     const playerCount = players.length;
     
-    // Calculate number of vampires (roughly 1/3 of players)
-    const vampireCount = Math.max(1, Math.floor(playerCount / 3));
+    // Use custom vampire count if set, otherwise calculate (roughly 1/3 of players)
+    const vampireCount = room.settings.vampireCount !== undefined 
+      ? Math.min(room.settings.vampireCount, Math.floor(playerCount / 2)) // Max 50% vampires
+      : Math.max(1, Math.floor(playerCount / 3));
     
     // Shuffle players array
     for (let i = players.length - 1; i > 0; i--) {
@@ -48,10 +50,13 @@ export class GameEngine {
   }
 
   private moveToNightPhase(room: Room): void {
+    const previousPhase = room.gamePhase;
     room.gamePhase = GamePhase.NIGHT_PHASE;
     room.votes.clear();
+    room.votesSubmitted.clear();
+    room.currentRound++; // Increment round at start of night
     
-    this.broadcastPhaseChange(room);
+    this.broadcastPhaseChange(room, previousPhase);
 
     // Start night timer
     this.startPhaseTimer(room, room.settings.nightTime, () => {
@@ -60,7 +65,9 @@ export class GameEngine {
   }
 
   private moveToDayDiscussion(room: Room): void {
+    const previousPhase = room.gamePhase;
     room.gamePhase = GamePhase.DAY_DISCUSSION;
+    room.extraTimeUsed = 0; // Reset extra time counter for new day
     
     // Announce night victim if any
     if (room.nightVictim) {
@@ -71,6 +78,7 @@ export class GameEngine {
           playerId: victim.id,
           playerName: victim.name,
           phase: 'NIGHT',
+          // Don't reveal role for night victims (mystery element)
         });
       }
       room.nightVictim = undefined;
@@ -83,7 +91,7 @@ export class GameEngine {
       return;
     }
 
-    this.broadcastPhaseChange(room);
+    this.broadcastPhaseChange(room, previousPhase);
 
     // Start discussion timer
     this.startPhaseTimer(room, room.settings.discussionTime, () => {
@@ -92,10 +100,12 @@ export class GameEngine {
   }
 
   private moveToDayVoting(room: Room): void {
+    const previousPhase = room.gamePhase;
     room.gamePhase = GamePhase.DAY_VOTING;
     room.votes.clear();
+    room.votesSubmitted.clear();
     
-    this.broadcastPhaseChange(room);
+    this.broadcastPhaseChange(room, previousPhase);
 
     // Start voting timer
     this.startPhaseTimer(room, room.settings.votingTime, () => {
@@ -129,41 +139,67 @@ export class GameEngine {
     }
 
     room.votes.set(voterId, targetId);
+    room.votesSubmitted.add(voterId);
 
-    // Notify all players that a vote was cast (without revealing who voted for whom)
-    this.io.to(room.code).emit('vote_cast', {
+    // Calculate vote progress
+    const eligibleVoters = this.getEligibleVoters(room);
+    const waitingFor = eligibleVoters
+      .filter(p => !room.votesSubmitted.has(p.id))
+      .map(p => p.name);
+
+    const progress = {
+      voted: room.votesSubmitted.size,
+      total: eligibleVoters.length,
+      percentage: Math.round((room.votesSubmitted.size / eligibleVoters.length) * 100),
+      waitingFor,
+    };
+
+    // Broadcast vote progress to all players
+    this.io.to(room.code).emit('vote_progress', progress);
+
+    // Also send individual confirmation to voter
+    this.io.to(voter.socketId).emit('vote_cast', {
       voterId,
+      targetId,
       voteCount: room.votes.size,
     });
 
     // Check if all eligible voters have voted
-    if (this.allEligibleVotersVoted(room)) {
+    if (room.votesSubmitted.size >= eligibleVoters.length) {
       // Clear timer and process votes immediately
       if (room.currentTimer) {
         clearInterval(room.currentTimer as any);
         room.currentTimer = undefined;
       }
 
-      if (room.gamePhase === GamePhase.NIGHT_PHASE) {
-        this.processNightVotes(room);
-      } else {
-        this.processDayVotes(room);
-      }
+      // Broadcast that voting is complete
+      this.io.to(room.code).emit('voting_complete', {
+        message: 'All players have voted. Processing results...',
+      });
+
+      // Small delay for UX (let players see the completion message)
+      setTimeout(() => {
+        if (room.gamePhase === GamePhase.NIGHT_PHASE) {
+          this.processNightVotes(room);
+        } else {
+          this.processDayVotes(room);
+        }
+      }, 1000);
     }
   }
 
-  private allEligibleVotersVoted(room: Room): boolean {
+  private getEligibleVoters(room: Room): Player[] {
     const alivePlayers = Array.from(room.players.values()).filter(
       p => p.status === PlayerStatus.ALIVE
     );
 
     if (room.gamePhase === GamePhase.NIGHT_PHASE) {
-      const aliveVampires = alivePlayers.filter(p => p.role === PlayerRole.VAMPIRE);
-      return room.votes.size >= aliveVampires.length;
-    } else {
-      return room.votes.size >= alivePlayers.length;
+      return alivePlayers.filter(p => p.role === PlayerRole.VAMPIRE);
     }
+
+    return alivePlayers;
   }
+
 
   private processNightVotes(room: Room): void {
     const voteCount = new Map<string, number>();
@@ -184,6 +220,35 @@ export class GameEngine {
       }
     }
 
+    // Record voting history
+    const votingRound: VotingRound = {
+      round: room.currentRound,
+      phase: 'NIGHT',
+      votes: Array.from(room.votes.entries()).map(([voterId, targetId]) => {
+        const voter = room.players.get(voterId);
+        const target = room.players.get(targetId);
+        return {
+          voterId,
+          voterName: voter?.name || 'Unknown',
+          targetId,
+          targetName: target?.name || 'Unknown',
+        };
+      }),
+      timestamp: new Date(),
+    };
+
+    if (victim) {
+      const victimPlayer = room.players.get(victim);
+      if (victimPlayer) {
+        votingRound.eliminated = {
+          playerId: victim,
+          playerName: victimPlayer.name,
+          // Don't reveal role for night victims (mystery)
+        };
+      }
+    }
+
+    room.votingHistory.push(votingRound);
     room.nightVictim = victim;
     room.votes.clear();
 
@@ -209,20 +274,45 @@ export class GameEngine {
       }
     }
 
+    // Record voting history
+    const votingRound: VotingRound = {
+      round: room.currentRound,
+      phase: 'DAY',
+      votes: Array.from(room.votes.entries()).map(([voterId, targetId]) => {
+        const voter = room.players.get(voterId);
+        const target = room.players.get(targetId);
+        return {
+          voterId,
+          voterName: voter?.name || 'Unknown',
+          targetId,
+          targetName: target?.name || 'Unknown',
+        };
+      }),
+      timestamp: new Date(),
+    };
+
     // Eliminate the player
     if (eliminated) {
       const player = room.players.get(eliminated);
       if (player) {
         player.status = PlayerStatus.ELIMINATED;
+        
+        votingRound.eliminated = {
+          playerId: player.id,
+          playerName: player.name,
+          role: room.settings.revealRoleOnElimination ? player.role : undefined,
+        };
+        
         this.io.to(room.code).emit('player_eliminated', {
           playerId: player.id,
           playerName: player.name,
-          role: player.role, // Reveal role when eliminated during day
+          role: room.settings.revealRoleOnElimination ? player.role : undefined,
           phase: 'DAY',
         });
       }
     }
 
+    room.votingHistory.push(votingRound);
     room.votes.clear();
 
     // Check win condition
@@ -243,6 +333,9 @@ export class GameEngine {
     const aliveVampires = alivePlayers.filter(p => p.role === PlayerRole.VAMPIRE);
     const aliveVillagers = alivePlayers.filter(p => p.role === PlayerRole.VILLAGER);
 
+    // Calculate game duration
+    const gameDuration = Math.floor((Date.now() - room.createdAt.getTime()) / 1000);
+
     if (aliveVampires.length === 0) {
       // Villagers win
       return {
@@ -251,6 +344,9 @@ export class GameEngine {
         eliminated: Array.from(room.players.values()).filter(
           p => p.status === PlayerStatus.ELIMINATED
         ),
+        totalRounds: room.currentRound,
+        gameDuration,
+        votingHistory: room.settings.showVotesAfterGame ? room.votingHistory : undefined,
       };
     }
 
@@ -262,6 +358,9 @@ export class GameEngine {
         eliminated: Array.from(room.players.values()).filter(
           p => p.status === PlayerStatus.ELIMINATED
         ),
+        totalRounds: room.currentRound,
+        gameDuration,
+        votingHistory: room.settings.showVotesAfterGame ? room.votingHistory : undefined,
       };
     }
 
@@ -288,6 +387,9 @@ export class GameEngine {
     this.io.to(room.code).emit('game_over', {
       winner: result.winner,
       players: allPlayers,
+      totalRounds: result.totalRounds,
+      gameDuration: result.gameDuration,
+      votingHistory: result.votingHistory, // Include if showVotesAfterGame is true
     });
   }
 
@@ -319,9 +421,59 @@ export class GameEngine {
     room.currentTimer = interval as any;
   }
 
-  private broadcastPhaseChange(room: Room): void {
-    this.io.to(room.code).emit('phase_change', {
-      phase: room.gamePhase,
+  private broadcastPhaseChange(room: Room, fromPhase?: GamePhase): void {
+    const phaseMessages: Record<GamePhase, string> = {
+      [GamePhase.LOBBY]: 'Waiting for players...',
+      [GamePhase.ROLE_REVEAL]: 'Revealing roles...',
+      [GamePhase.NIGHT_PHASE]: '🌙 Night falls... Vampires, choose your victim.',
+      [GamePhase.DAY_DISCUSSION]: '☀️ Day breaks. Discuss who might be a vampire.',
+      [GamePhase.DAY_VOTING]: '🗳️ Time to vote! Who do you suspect?',
+      [GamePhase.GAME_OVER]: 'Game Over',
+    };
+
+    const phaseDurations: Partial<Record<GamePhase, number>> = {
+      [GamePhase.ROLE_REVEAL]: room.settings.roleRevealTime,
+      [GamePhase.NIGHT_PHASE]: room.settings.nightTime,
+      [GamePhase.DAY_DISCUSSION]: room.settings.discussionTime,
+      [GamePhase.DAY_VOTING]: room.settings.votingTime,
+    };
+
+    const event: PhaseTransitionEvent = {
+      fromPhase: fromPhase || room.gamePhase,
+      toPhase: room.gamePhase,
+      duration: phaseDurations[room.gamePhase],
+      message: phaseMessages[room.gamePhase],
+    };
+
+    this.io.to(room.code).emit('phase_change', event);
+  }
+
+  extendTime(room: Room, seconds: number): void {
+    if (!room.currentTimer) {
+      throw new Error('No active timer to extend');
+    }
+
+    if (room.gamePhase !== GamePhase.DAY_DISCUSSION) {
+      throw new Error('Can only extend time during day discussion');
+    }
+
+    if (!room.settings.extraTimeAllowed) {
+      throw new Error('Extra time is not allowed in this game');
+    }
+
+    if ((room.extraTimeUsed || 0) >= room.settings.maxExtraTimeUses) {
+      throw new Error('Maximum extra time uses reached');
+    }
+
+    // Add time to current timer duration
+    room.timerDuration = (room.timerDuration || 0) + seconds;
+    room.extraTimeUsed = (room.extraTimeUsed || 0) + 1;
+
+    // Broadcast time extension
+    this.io.to(room.code).emit('time_extended', {
+      addedTime: seconds,
+      totalTime: room.timerDuration,
+      extensionsRemaining: room.settings.maxExtraTimeUses - room.extraTimeUsed,
     });
   }
 

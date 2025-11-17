@@ -18,7 +18,7 @@ export class RoomManager {
     return code;
   }
 
-  createRoom(hostId: string, hostSocketId: string, hostName: string, maxPlayers: number = 8): Room {
+  createRoom(hostId: string, hostSocketId: string, hostName: string, customSettings?: Partial<GameSettings>): Room {
     const code = this.generateRoomCode();
     
     const host: Player = {
@@ -29,12 +29,23 @@ export class RoomManager {
       isHost: true,
     };
 
-    const settings: GameSettings = {
+    const defaultSettings: GameSettings = {
       discussionTime: 120, // 2 minutes
       votingTime: 60, // 1 minute
       nightTime: 30, // 30 seconds
+      roleRevealTime: 10, // 10 seconds
       minPlayers: 4,
-      maxPlayers: maxPlayers,
+      maxPlayers: 10,
+      extraTimeAllowed: true,
+      extraTimeAmount: 30, // 30 seconds
+      maxExtraTimeUses: 2,
+      showVotesAfterGame: true,
+      revealRoleOnElimination: true,
+    };
+
+    const settings: GameSettings = {
+      ...defaultSettings,
+      ...customSettings,
     };
 
     const room: Room = {
@@ -44,12 +55,35 @@ export class RoomManager {
       gamePhase: GamePhase.LOBBY,
       settings,
       votes: new Map(),
+      votesSubmitted: new Set(),
       createdAt: new Date(),
+      extraTimeUsed: 0,
+      currentRound: 0,
+      votingHistory: [],
     };
 
     this.rooms.set(code, room);
     this.playerRooms.set(hostSocketId, code);
     
+    return room;
+  }
+
+  updateSettings(roomCode: string, newSettings: Partial<GameSettings>): Room | null {
+    const room = this.rooms.get(roomCode);
+    
+    if (!room) {
+      throw new Error('Room not found');
+    }
+    
+    if (room.gamePhase !== GamePhase.LOBBY) {
+      throw new Error('Cannot change settings after game has started');
+    }
+
+    room.settings = {
+      ...room.settings,
+      ...newSettings,
+    };
+
     return room;
   }
 
